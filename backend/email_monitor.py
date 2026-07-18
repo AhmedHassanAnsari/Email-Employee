@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import urllib.request
 from dataclasses import dataclass
 
@@ -56,35 +57,97 @@ class MonitorConfig:
         )
 
 
-def _tool_json(result) -> object:
-    """Best-effort parse of an MCP CallToolResult into Python data.
+def _tool_text(result) -> str:
+    """Extract the human-formatted text payload from an MCP CallToolResult.
 
-    workspace-mcp returns JSON as text content; fall back to structuredContent
-    when present.
+    workspace-mcp's Gmail tools return a single formatted TEXT string (not JSON),
+    optionally wrapped by fastmcp as ``{"result": "..."}`` in structuredContent.
     """
     structured = getattr(result, "structuredContent", None)
-    if structured:
-        return structured
+    if isinstance(structured, dict):
+        inner = structured.get("result")
+        if isinstance(inner, str):
+            return inner
     for block in getattr(result, "content", []) or []:
         text = getattr(block, "text", None)
-        if text:
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                return text
-    return None
+        if isinstance(text, str):
+            # A fastmcp text block may itself be a JSON envelope {"result": "..."}.
+            stripped = text.lstrip()
+            if stripped.startswith("{"):
+                try:
+                    obj = json.loads(text)
+                    if isinstance(obj, dict) and isinstance(obj.get("result"), str):
+                        return obj["result"]
+                except json.JSONDecodeError:
+                    pass
+            return text
+    return ""
 
 
-def _extract_messages(parsed: object) -> list[dict]:
-    """Normalise a search result into a list of message dicts."""
-    if isinstance(parsed, dict):
-        for key in ("messages", "results", "items"):
-            if isinstance(parsed.get(key), list):
-                return parsed[key]
-        return []
-    if isinstance(parsed, list):
-        return [m for m in parsed if isinstance(m, dict)]
-    return []
+# search_gmail_messages emits blocks of "  N. Message ID: <id>\n ... Thread ID: <tid>".
+_MESSAGE_ID_RE = re.compile(r"^\s*\d+\.\s*Message ID:\s*(\S+)", re.MULTILINE)
+_THREAD_ID_RE = re.compile(r"^\s*Thread ID:\s*(\S+)", re.MULTILINE)
+
+
+def _extract_search_ids(text: str) -> list[tuple[str, str | None]]:
+    """Parse (message_id, thread_id) pairs from the search tool's text output.
+
+    Message ID and Thread ID lines alternate per message block, so we zip them
+    positionally. Entries whose id is ``unknown`` (the tool's null placeholder)
+    are dropped.
+    """
+    message_ids = _MESSAGE_ID_RE.findall(text)
+    thread_ids = _THREAD_ID_RE.findall(text)
+    pairs: list[tuple[str, str | None]] = []
+    for idx, mid in enumerate(message_ids):
+        if mid == "unknown":
+            continue
+        tid = thread_ids[idx] if idx < len(thread_ids) else None
+        pairs.append((mid, None if tid in (None, "unknown") else tid))
+    return pairs
+
+
+# get_gmail_messages_content_batch emits per-message blocks separated by "\n---\n\n",
+# each starting "Message ID: <id>" then "Subject:"/"From:"/... header lines and a BODY.
+_CONTENT_MSG_ID_RE = re.compile(r"^Message ID:\s*(\S+)", re.MULTILINE)
+
+
+def _parse_content_batch(text: str) -> dict[str, dict]:
+    """Map message_id -> {subject, from, snippet} from the batch-content text."""
+    parsed: dict[str, dict] = {}
+    for block in text.split("\n---\n\n"):
+        m = _CONTENT_MSG_ID_RE.search(block)
+        if not m:
+            continue
+        mid = m.group(1)
+        subject = _header_value(block, "Subject")
+        from_addr = _header_value(block, "From")
+        snippet = _body_snippet(block)
+        parsed[mid] = {
+            "subject": subject,
+            "from": from_addr,
+            "snippet": snippet,
+        }
+    return parsed
+
+
+def _header_value(block: str, name: str) -> str | None:
+    m = re.search(rf"^{re.escape(name)}:\s*(.*)$", block, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def _body_snippet(block: str, limit: int = 2000) -> str:
+    """Text after the '--- BODY ---' marker, trimmed to a sane length."""
+    marker = "--- BODY ---"
+    idx = block.find(marker)
+    if idx == -1:
+        return ""
+    body = block[idx + len(marker) :].strip()
+    # Drop a trailing attachments section if present.
+    att = body.find("--- ATTACHMENTS ---")
+    if att != -1:
+        body = body[:att].strip()
+    return body[:limit]
 
 
 class EmailMonitor:
@@ -93,35 +156,95 @@ class EmailMonitor:
         self.sessionmaker = sessionmaker
         self.auth = auth
         self.is_running = False
+        # Resolved "Processed" label id per user (Gmail label ids are per-account).
+        self._label_ids: dict[str, str] = {}
         ensure_dirs()
+
+    async def _processed_label_id(self, user_id: str, gmail) -> str | None:
+        """Resolve (creating if needed) the 'Processed' label id for a user."""
+        cached = self._label_ids.get(user_id)
+        if cached:
+            return cached
+
+        listing = _tool_text(
+            await gmail.call_tool("list_gmail_labels", {"user_google_email": user_id})
+        )
+        m = re.search(
+            rf"^\s*•\s*{re.escape(PROCESSED_LABEL)}\s*\(ID:\s*(\S+?)\)",
+            listing,
+            re.MULTILINE,
+        )
+        if m:
+            self._label_ids[user_id] = m.group(1)
+            return m.group(1)
+
+        created = _tool_text(
+            await gmail.call_tool(
+                "manage_gmail_label",
+                {"user_google_email": user_id, "action": "create", "name": PROCESSED_LABEL},
+            )
+        )
+        cm = re.search(r"ID:\s*(\S+)", created)
+        if cm:
+            self._label_ids[user_id] = cm.group(1)
+            return cm.group(1)
+        return None
 
     async def poll_user(self, user_id: str) -> None:
         token = await self.auth.get_access_token(user_id)
         async with gmail_server_for_token(token) as gmail:
             search = await gmail.call_tool(
-                "search_gmail_messages", {"query": SEARCH_QUERY}
+                "search_gmail_messages",
+                {"query": SEARCH_QUERY, "user_google_email": user_id},
             )
-            messages = _extract_messages(_tool_json(search))
-            if not messages:
+            pairs = _extract_search_ids(_tool_text(search))
+            if not pairs:
                 return
-            logger.info("User %s: %d candidate message(s)", user_id, len(messages))
-            for msg in messages:
-                await self._handle_message(user_id, gmail, msg)
 
-    async def _handle_message(self, user_id: str, gmail, msg: dict) -> None:
-        message_id = str(msg.get("id") or msg.get("message_id") or "").strip()
-        if not message_id:
-            return
+            # Filter out ids we've already ingested before spending a content fetch.
+            async with self.sessionmaker() as session:
+                fresh = [
+                    (mid, tid)
+                    for mid, tid in pairs
+                    if await get_by_message_id(session, mid) is None
+                ]
+            if not fresh:
+                return
+            logger.info("User %s: %d new message(s)", user_id, len(fresh))
 
-        async with self.sessionmaker() as session:
-            if await get_by_message_id(session, message_id) is not None:
-                return  # already ingested — DB guard on top of the label filter
+            content = await gmail.call_tool(
+                "get_gmail_messages_content_batch",
+                {
+                    "message_ids": [mid for mid, _ in fresh],
+                    "user_google_email": user_id,
+                    "format": "full",
+                },
+            )
+            contents = _parse_content_batch(_tool_text(content))
 
-        thread_id = msg.get("threadId") or msg.get("thread_id")
-        from_addr = msg.get("from") or msg.get("sender")
-        subject = msg.get("subject")
-        snippet = msg.get("snippet") or msg.get("body") or ""
+            for message_id, thread_id in fresh:
+                info = contents.get(message_id, {})
+                await self._handle_message(
+                    user_id,
+                    gmail,
+                    message_id=message_id,
+                    thread_id=thread_id,
+                    from_addr=info.get("from"),
+                    subject=info.get("subject"),
+                    snippet=info.get("snippet", ""),
+                )
 
+    async def _handle_message(
+        self,
+        user_id: str,
+        gmail,
+        *,
+        message_id: str,
+        thread_id: str | None,
+        from_addr: str | None,
+        subject: str | None,
+        snippet: str,
+    ) -> None:
         inbox_payload_path(message_id).write_text(
             json.dumps(
                 {
@@ -138,10 +261,16 @@ class EmailMonitor:
 
         # Label first so a crash mid-processing still skips it next round.
         try:
-            await gmail.call_tool(
-                "modify_gmail_message_labels",
-                {"message_id": message_id, "add_label_names": [PROCESSED_LABEL]},
-            )
+            label_id = await self._processed_label_id(user_id, gmail)
+            if label_id:
+                await gmail.call_tool(
+                    "modify_gmail_message_labels",
+                    {
+                        "user_google_email": user_id,
+                        "message_id": message_id,
+                        "add_label_ids": [label_id],
+                    },
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to label %s: %s", message_id, exc)
 
