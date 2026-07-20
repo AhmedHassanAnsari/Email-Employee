@@ -166,9 +166,7 @@ class EmailMonitor:
         if cached:
             return cached
 
-        listing = _tool_text(
-            await gmail.call_tool("list_gmail_labels", {"user_google_email": user_id})
-        )
+        listing = _tool_text(await gmail.call_tool("list_gmail_labels", {}))
         m = re.search(
             rf"^\s*•\s*{re.escape(PROCESSED_LABEL)}\s*\(ID:\s*(\S+?)\)",
             listing,
@@ -181,7 +179,7 @@ class EmailMonitor:
         created = _tool_text(
             await gmail.call_tool(
                 "manage_gmail_label",
-                {"user_google_email": user_id, "action": "create", "name": PROCESSED_LABEL},
+                {"action": "create", "name": PROCESSED_LABEL},
             )
         )
         cm = re.search(r"ID:\s*(\S+)", created)
@@ -195,7 +193,7 @@ class EmailMonitor:
         async with gmail_server_for_token(token) as gmail:
             search = await gmail.call_tool(
                 "search_gmail_messages",
-                {"query": SEARCH_QUERY, "user_google_email": user_id},
+                {"query": SEARCH_QUERY},
             )
             pairs = _extract_search_ids(_tool_text(search))
             if not pairs:
@@ -216,7 +214,6 @@ class EmailMonitor:
                 "get_gmail_messages_content_batch",
                 {
                     "message_ids": [mid for mid, _ in fresh],
-                    "user_google_email": user_id,
                     "format": "full",
                 },
             )
@@ -266,7 +263,6 @@ class EmailMonitor:
                 await gmail.call_tool(
                     "modify_gmail_message_labels",
                     {
-                        "user_google_email": user_id,
                         "message_id": message_id,
                         "add_label_ids": [label_id],
                     },

@@ -32,15 +32,7 @@ class NotificationEvent(BaseModel):
 
 
 def _credentials_present() -> bool:
-    return all(
-        os.getenv(v)
-        for v in (
-            "TWILIO_ACCOUNT_SID",
-            "TWILIO_AUTH_TOKEN",
-            "TWILIO_WHATSAPP_FROM",
-            "USER_WHATSAPP_TO",
-        )
-    )
+    return all(os.getenv(v) for v in ("account_sid", "auth_token", "from", "to"))
 
 
 def _notify_instructions(

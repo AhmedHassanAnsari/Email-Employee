@@ -3,9 +3,13 @@
 Postgres is the source of truth; these on-disk JSON files are a debuggable
 working area:
 
-* ``inbox/{message_id}.json``   — written by the poller when a new email is detected.
-* ``approval/{email_id}.json``  — written by ``/solve``; the draft awaiting review.
+* ``Inbox/{message_id}.json``   — written by the poller when a new email is detected.
+* ``Approval/{email_id}.json``  — written by ``/solve``; the draft awaiting review.
 * ``Done/{email_id}.summary.json`` — audit sidecar written by ``/approve``.
+
+Names match the CLAUDE.md folder-state-machine contract (capitalised) so they
+resolve identically on case-sensitive filesystems (Docker/prod), not just on
+the case-insensitive WSL ``/mnt/c`` mount.
 """
 
 from __future__ import annotations
@@ -13,8 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent.parent
-INBOX_DIR = BASE_DIR / "inbox"
-APPROVAL_DIR = BASE_DIR / "approval"
+INBOX_DIR = BASE_DIR / "Inbox"
+APPROVAL_DIR = BASE_DIR / "Approval"
 DONE_DIR = BASE_DIR / "Done"
 
 

@@ -108,6 +108,8 @@ async def approve(email_id: int, session: SessionDep) -> dict:
         ),
         encoding="utf-8",
     )
+    # The email has moved to Done/; drop its pending-approval artefact.
+    approval_payload_path(email_id).unlink(missing_ok=True)
     await notify(
         NotificationEvent(
             event_type="done", email_id=email_id, subject=subject, summary=summary.summary

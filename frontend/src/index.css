@@ -1,0 +1,17 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom utilities */
+@layer utilities {
+  .glass {
+    @apply bg-card bg-opacity-60 backdrop-blur-md rounded-xl shadow-lg;
+  }
+  .btn-primary {
+    @apply px-4 py-2 rounded bg-primary text-white hover:bg-primary/80 transition;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 rounded bg-secondary text-white hover:bg-secondary/80 transition;
+  }
+}

@@ -16,10 +16,10 @@ from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
-TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
-USER_WHATSAPP_TO = os.getenv("USER_WHATSAPP_TO", "")
+TWILIO_ACCOUNT_SID = os.getenv("account_sid", "")
+TWILIO_AUTH_TOKEN = os.getenv("auth_token", "")
+TWILIO_WHATSAPP_FROM = os.getenv("from", "")
+USER_WHATSAPP_TO = os.getenv("to", "")
 
 mcp = FastMCP("whatsapp-notify")
 
