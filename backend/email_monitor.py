@@ -38,7 +38,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-DEFAULT_POLL_SECONDS = 30
+DEFAULT_POLL_SECONDS = 5
 DEFAULT_AGENT_API_BASE = "http://127.0.0.1:8001"
 PROCESSED_LABEL = "Processed"
 SEARCH_QUERY = "is:unread in:inbox -label:Processed"

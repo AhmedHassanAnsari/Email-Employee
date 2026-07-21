@@ -10,13 +10,18 @@ working area:
 Names match the CLAUDE.md folder-state-machine contract (capitalised) so they
 resolve identically on case-sensitive filesystems (Docker/prod), not just on
 the case-insensitive WSL ``/mnt/c`` mount.
+
+``BASE_DIR`` resolves via the ``APP_BASE_DIR`` env var when set (e.g. ``/app``
+inside Docker), falling back to the parent-counting logic for local/WSL runs
+where the on-disk layout differs from the container layout.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-BASE_DIR = Path(__file__).parent.parent.parent
+BASE_DIR = Path(os.getenv("APP_BASE_DIR", Path(__file__).parent.parent.parent))
 INBOX_DIR = BASE_DIR / "Inbox"
 APPROVAL_DIR = BASE_DIR / "Approval"
 DONE_DIR = BASE_DIR / "Done"

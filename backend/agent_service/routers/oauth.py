@@ -12,7 +12,7 @@ refresh token (see auth_client.py).
 """
 
 from __future__ import annotations
-
+from db.repository import get_google_token, upsert_google_token
 import os
 from urllib.parse import urlencode
 
@@ -94,11 +94,12 @@ async def callback(
             raise HTTPException(status_code=502, detail="userinfo lookup failed")
         email = userinfo_resp.json().get("email")
 
+    
     if not email:
         raise HTTPException(status_code=502, detail="no email in userinfo")
-    if not refresh_token:
-        # Google omits refresh_token on re-consent unless prompt=consent forced it.
-        # We do force it, so absence means the user previously granted without it.
+
+    existing_token = await get_google_token(session, email)
+    if not refresh_token and existing_token is None:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -110,7 +111,7 @@ async def callback(
     await upsert_google_token(
         session,
         user_id=email,
-        refresh_token_enc=encrypt(refresh_token),
+        refresh_token_enc=encrypt(refresh_token) if refresh_token else None,
         scopes=scope,
     )
     frontend = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")

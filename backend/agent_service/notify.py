@@ -13,11 +13,11 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from agents import Agent, RunConfig, Runner, RunContextWrapper
+from agents import Agent, RunContextWrapper
 from agents.mcp import MCPServerStdio
 from pydantic import BaseModel
 
-from .agent import config as _run_config
+from .agent import _run_with_fallback
 
 logger = logging.getLogger("notify")
 
@@ -177,7 +177,7 @@ async def notify(event: NotificationEvent) -> bool:
         if agent is None:
             return False
         trigger = f"Process the {event.event_type} event for email {event.email_id}."
-        result = await Runner.run(agent, trigger, context=event, run_config=_run_config)
+        result = await _run_with_fallback(agent, trigger, context=event)
         outcome = _extract_tool_outcome(result)
         if not outcome:
             logger.warning("notify %s: agent did not call send_whatsapp", event.event_type)

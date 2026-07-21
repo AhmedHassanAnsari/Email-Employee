@@ -1,0 +1,47 @@
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+
+RUN pip install --no-cache-dir uv==0.5.11
+
+WORKDIR /build
+
+# Requires pyproject.toml + uv.lock to exist in backend/ — see note below.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+COPY agent_service ./agent_service
+COPY notify_service ./notify_service
+COPY db ./db
+
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN groupadd --system app && useradd --system --gid app --home /app app
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder --chown=app:app /build/agent_service ./agent_service
+COPY --from=builder --chown=app:app /build/notify_service ./notify_service
+COPY --from=builder --chown=app:app /build/db ./db
+COPY --chown=app:app alembic.ini ./alembic.ini
+
+RUN mkdir -p Inbox Approval Done && chown -R app:app /app
+
+USER app
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=3).status==200 else 1)"
+
+CMD ["sh", "-c", "alembic upgrade head && uvicorn agent_service.main:app --host 0.0.0.0 --port 8001"]

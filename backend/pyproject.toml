@@ -1,0 +1,23 @@
+[project]
+name = "email-employee"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "cryptography>=49.0.0",
+    "fastapi>=0.139.0",
+    "google-api-python-client>=2.198.0",
+    "google-auth>=2.56.0",
+    "google-auth-oauthlib>=1.4.0",
+    "httpx>=0.28.1",
+    "mcp==1.27.1",
+    "openai==2.36.0",
+    "openai-agents==0.17.0",
+    "python-dotenv>=1.2.2",
+    "sqlalchemy[asyncio]>=2.0.51",
+    "sqlmodel>=0.0.39",
+    "uvicorn>=0.51.0",
+]
