@@ -56,7 +56,7 @@ async def callback(
     session: SessionDep,
     code: str | None = Query(default=None),
     error: str | None = Query(default=None),
-) -> dict:
+) -> RedirectResponse:
     if error:
         raise HTTPException(status_code=400, detail=f"Google returned error: {error}")
     if not code:
@@ -112,4 +112,4 @@ async def callback(
         refresh_token_enc=encrypt(refresh_token),
         scopes=scope,
     )
-    return {"status": "authorized", "user_id": email}
+    return RedirectResponse(f"http://localhost:5173/?auth=success&email={email}")
