@@ -1,53 +1,83 @@
 // src/context/EventContext.tsx
-import React, { createContext, useContext, useState, ReactNode } from "react";
-import { v4 as uuidv4 } from "uuid";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  ReactNode,
+} from "react";
+import {
+  EmailEvent,
+  fetchEmails,
+  approveEmail,
+  rejectEmail,
+} from "../api/client";
+import { useAuth } from "./AuthContext";
 
-export interface Event {
-  id: string;
-  title: string;
-  description: string;
-  status: "inbox" | "approval" | "done";
-}
+export type Event = EmailEvent;
 
 interface EventContextProps {
   inbox: Event[];
   approval: Event[];
   done: Event[];
-  accept: (id: string) => void;
-  reject: (id: string, feedback: string) => void;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+  accept: (id: string) => Promise<void>;
+  reject: (id: string, feedback: string) => Promise<void>;
 }
 
 const EventContext = createContext<EventContextProps | undefined>(undefined);
 
-const mockEvents: Event[] = [
-  { id: uuidv4(), title: "Welcome Email", description: "Send welcome email to new hire.", status: "inbox" },
-  { id: uuidv4(), title: "Policy Update", description: "Review updated HR policy.", status: "approval" },
-  { id: uuidv4(), title: "Monthly Report", description: "Compile monthly performance report.", status: "done" },
-];
-
 export const EventProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [inbox, setInbox] = useState<Event[]>(mockEvents.filter((e) => e.status === "inbox"));
-  const [approval, setApproval] = useState<Event[]>(mockEvents.filter((e) => e.status === "approval"));
-  const [done, setDone] = useState<Event[]>(mockEvents.filter((e) => e.status === "done"));
+  const { userEmail, isAuthenticated } = useAuth();
+  const [inbox, setInbox] = useState<Event[]>([]);
+  const [approval, setApproval] = useState<Event[]>([]);
+  const [done, setDone] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const accept = (id: string) => {
-    // move from approval to done
-    setApproval((prev) => prev.filter((e) => e.id !== id));
-    const moved = approval.find((e) => e.id === id);
-    if (moved) setDone((prev) => [...prev, { ...moved, status: "done" }]);
-  };
+  const refresh = useCallback(async () => {
+    if (!userEmail) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const buckets = await fetchEmails(userEmail);
+      setInbox(buckets.inbox);
+      setApproval(buckets.approval);
+      setDone(buckets.done);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load emails");
+    } finally {
+      setLoading(false);
+    }
+  }, [userEmail]);
 
-  const reject = (id: string, feedback: string) => {
-    // keep in approval but could log feedback (for now just console)
-    console.log(`Event ${id} rejected with feedback: ${feedback}`);
-    // Optionally move back to inbox
-    setApproval((prev) => prev.filter((e) => e.id !== id));
-    const moved = approval.find((e) => e.id === id);
-    if (moved) setInbox((prev) => [...prev, { ...moved, status: "inbox" }]);
-  };
+  useEffect(() => {
+    if (isAuthenticated) refresh();
+  }, [isAuthenticated, refresh]);
+
+  const accept = useCallback(
+    async (id: string) => {
+      await approveEmail(id);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const reject = useCallback(
+    async (id: string, feedback: string) => {
+      await rejectEmail(id, feedback);
+      await refresh();
+    },
+    [refresh]
+  );
 
   return (
-    <EventContext.Provider value={{ inbox, approval, done, accept, reject }}>
+    <EventContext.Provider
+      value={{ inbox, approval, done, loading, error, refresh, accept, reject }}
+    >
       {children}
     </EventContext.Provider>
   );

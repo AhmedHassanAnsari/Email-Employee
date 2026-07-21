@@ -13,6 +13,7 @@ refresh token (see auth_client.py).
 
 from __future__ import annotations
 
+import os
 from urllib.parse import urlencode
 
 import httpx
@@ -112,4 +113,7 @@ async def callback(
         refresh_token_enc=encrypt(refresh_token),
         scopes=scope,
     )
-    return RedirectResponse(f"http://localhost:5173/?auth=success&email={email}")
+    frontend = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+    return RedirectResponse(
+        f"{frontend}/?{urlencode({'auth': 'success', 'email': email})}"
+    )

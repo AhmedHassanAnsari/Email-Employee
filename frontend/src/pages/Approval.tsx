@@ -5,12 +5,22 @@ import EventCard from "../components/EventCard";
 import RejectModal from "../components/RejectModal";
 
 const Approval: React.FC = () => {
-  const { approval, accept, reject } = useEvent();
+  const { approval, accept, reject, loading, error } = useEvent();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const handleAccept = (id: string) => {
-    accept(id);
+  const handleAccept = async (id: string) => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await accept(id);
+    } catch (e: any) {
+      setActionError(e?.message ?? "Failed to approve");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleReject = (id: string) => {
@@ -18,18 +28,31 @@ const Approval: React.FC = () => {
     setModalOpen(true);
   };
 
-  const submitFeedback = (feedback: string) => {
-    if (selectedId) {
-      reject(selectedId, feedback);
-    }
+  const submitFeedback = async (feedback: string) => {
     setModalOpen(false);
-    setSelectedId(null);
+    if (!selectedId) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await reject(selectedId, feedback);
+    } catch (e: any) {
+      setActionError(e?.message ?? "Failed to reject");
+    } finally {
+      setBusy(false);
+      setSelectedId(null);
+    }
   };
 
   return (
     <div className="space-y-4">
       <h2 className="text-2xl font-bold mb-4 text-white">Approval</h2>
-      {approval.length === 0 ? (
+      {(error || actionError) && (
+        <p className="text-red-400">{actionError ?? error}</p>
+      )}
+      {busy && <p className="text-gray-400">Working…</p>}
+      {loading && approval.length === 0 ? (
+        <p className="text-gray-400">Loading…</p>
+      ) : approval.length === 0 ? (
         <p className="text-gray-400">No items pending approval.</p>
       ) : (
         approval.map((event) => (

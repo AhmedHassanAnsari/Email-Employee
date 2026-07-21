@@ -39,30 +39,62 @@ def _notify_instructions(
     wrapper: RunContextWrapper[NotificationEvent], agent: Agent
 ) -> str:
     ev = wrapper.context
-    base = (
-        "You are a concise WhatsApp notifier for an email-automation system. "
-        "You MUST call the send_whatsapp tool exactly once with a well-formatted "
-        "plain-text body for the event below. Keep it under 350 characters. "
-        "After the tool call, reply with one short confirmation line.\n\n"
+
+    role = (
+        "# ROLE\n"
+        "You are the WhatsApp Notifier for an autonomous email-automation "
+        "system. You are a machine relay, not a conversational assistant. Your "
+        "sole function is to deliver one WhatsApp message about the event below "
+        "by calling the send_whatsapp tool.\n\n"
+        "# GOAL\n"
+        "Convert the EVENT DATA into a single concise plain-text WhatsApp "
+        "message and deliver it by calling send_whatsapp.\n\n"
+        "# ABSOLUTE RULES\n"
+        "1. Your FIRST and ONLY action MUST be a call to the send_whatsapp "
+        "tool. Do not emit any assistant text before the tool call.\n"
+        "2. Call send_whatsapp EXACTLY ONCE. Never zero times, never twice.\n"
+        "3. Calling the tool is MANDATORY and unconditional. Never decide the "
+        "message is unnecessary, never ask the user for confirmation, never "
+        "explain what you are about to do instead of doing it.\n"
+        "4. Put the entire notification text in the tool's `body` argument. "
+        "The message is only 'sent' if the tool is called — text you write "
+        "outside the tool call is discarded and the user never sees it.\n"
+        "5. After the tool returns, reply with exactly one short confirmation "
+        "line (e.g. 'Notification sent.'). Add nothing else.\n\n"
+        "# TOOL INPUT CONTRACT (send_whatsapp)\n"
+        "- body (string, REQUIRED): the plain-text WhatsApp message. Plain text "
+        "only \u2014 no markdown, no code fences, no emojis. Maximum 350 "
+        "characters. Recipient and sender are configured server-side; you "
+        "provide ONLY the body.\n\n"
+        "# MESSAGE BODY REQUIREMENTS\n"
     )
+
     if ev.event_type == "approval":
-        body = (
-            f"Event: DRAFT AWAITING APPROVAL.\n"
-            f"Email ID: {ev.email_id}\n"
-            f"Subject: {ev.subject or '(no subject)'}\n\n"
-            "Tell the user a drafted reply is awaiting their review and approval."
+        spec = (
+            "Compose the body from this EVENT DATA, event type = APPROVAL "
+            "(a drafted reply is waiting for the user to review and approve):\n"
+            f"- Email ID: {ev.email_id}\n"
+            f"- Subject: {ev.subject or '(no subject)'}\n\n"
+            "The body MUST tell the user that a drafted email reply is awaiting "
+            "their review and approval, and MUST include the Email ID and the "
+            "Subject so they can identify it."
         )
     elif ev.event_type == "done":
-        body = (
-            f"Event: EMAIL SENT.\n"
-            f"Email ID: {ev.email_id}\n"
-            f"Subject: {ev.subject or '(no subject)'}\n"
-            f"Summary: {ev.summary or '(no summary)'}\n\n"
-            "Tell the user the reply was sent. Embed the summary verbatim."
+        spec = (
+            "Compose the body from this EVENT DATA, event type = DONE "
+            "(the approved reply has been sent):\n"
+            f"- Email ID: {ev.email_id}\n"
+            f"- Subject: {ev.subject or '(no subject)'}\n"
+            f"- Summary: {ev.summary or '(no summary)'}\n\n"
+            "The body MUST tell the user the reply was sent, MUST include the "
+            "Email ID and Subject, and MUST embed the Summary text verbatim."
         )
     else:
-        body = "Unknown event. Do not call the tool."
-    return base + body
+        spec = (
+            "EVENT DATA is malformed (unknown event type). Call send_whatsapp "
+            "once with body exactly: 'Email automation: unrecognized event.'"
+        )
+    return role + spec
 
 
 _notify_agent: Agent | None = None
@@ -98,19 +130,40 @@ async def _get_agent() -> Agent | None:
     return _notify_agent
 
 
+def _unwrap_mcp_content(raw):
+    """Unwrap the MCP tool-output envelope into the tool's own dict.
+
+    The openai-agents MCP layer delivers a send_whatsapp result as a content
+    block ({"type": "text", "text": "<json>"}), or a list of such blocks, not
+    the raw dict the tool returned. Peel that off and parse the inner JSON.
+    """
+    if isinstance(raw, list):
+        for block in raw:
+            unwrapped = _unwrap_mcp_content(block)
+            if unwrapped is not None:
+                return unwrapped
+        return None
+    if isinstance(raw, dict):
+        if raw.get("type") == "text" and isinstance(raw.get("text"), str):
+            try:
+                return json.loads(raw["text"])
+            except Exception:
+                return {"status": "unknown", "raw": raw["text"]}
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"status": "unknown", "raw": raw}
+    return None
+
+
 def _extract_tool_outcome(result) -> dict | None:
     from agents.items import ToolCallOutputItem
 
     for item in reversed(getattr(result, "new_items", []) or []):
         if isinstance(item, ToolCallOutputItem):
-            raw = item.output
-            if isinstance(raw, dict):
-                return raw
-            if isinstance(raw, str):
-                try:
-                    return json.loads(raw)
-                except Exception:
-                    return {"status": "unknown", "raw": raw}
+            return _unwrap_mcp_content(item.output)
     return None
 
 

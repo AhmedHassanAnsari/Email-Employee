@@ -29,6 +29,16 @@ async def list_processed_message_ids(session: AsyncSession) -> set[str]:
     return set(result.scalars().all())
 
 
+async def list_by_user(session: AsyncSession, user_id: str) -> list[Email]:
+    """All emails for a user, newest first — powers the UI's folder views."""
+    result = await session.execute(
+        select(Email)
+        .where(Email.user_id == user_id)
+        .order_by(Email.created_at.desc(), Email.id.desc())
+    )
+    return list(result.scalars().all())
+
+
 async def upsert_incoming(
     session: AsyncSession,
     *,

@@ -15,7 +15,7 @@ import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from db.repository import get_email, set_status
+from db.repository import get_email, list_by_user, set_status
 from db.session import SessionDep
 from .. import agent as pipeline
 from ..auth_client import AuthClient
@@ -26,9 +26,57 @@ from ..storage import approval_payload_path, done_summary_path
 
 router = APIRouter(prefix="/emails", tags=["lifecycle"])
 
+# DB status -> the UI folder it belongs in.
+_FOLDER_FOR_STATUS = {
+    "pending": "inbox",
+    "drafted": "approval",
+    "approved": "approval",
+    "sent": "done",
+    "failed": "inbox",
+}
+
 
 class RejectBody(BaseModel):
     feedback: str
+
+
+def _read_json(path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _serialize(email) -> dict:
+    """Shape a DB row (+ its on-disk artefact) into the UI's event model."""
+    folder = _FOLDER_FOR_STATUS.get(email.status, "inbox")
+    description = email.snippet or ""
+    final_response = None
+    summary = None
+
+    if folder == "approval":
+        draft = _read_json(approval_payload_path(email.id))
+        description = draft.get("body") or email.draft_response or description
+    elif folder == "done":
+        done = _read_json(done_summary_path(email.id))
+        final_response = done.get("final_response") or email.draft_response
+        summary = done.get("summary")
+        description = summary or final_response or description
+
+    return {
+        "id": str(email.id),
+        "status": folder,
+        "title": email.subject or "(no subject)",
+        "from": email.from_addr,
+        "description": description,
+        "snippet": email.snippet or "",
+        "draft_response": email.draft_response,
+        "final_response": final_response,
+        "summary": summary,
+        "db_status": email.status,
+    }
 
 
 def _incoming_from_row(email) -> IncomingEmail:
@@ -52,6 +100,17 @@ async def _load(session, email_id: int):
     if email is None:
         raise HTTPException(status_code=404, detail="email not found")
     return email
+
+
+@router.get("")
+async def list_emails(session: SessionDep, user_id: str) -> dict:
+    """All of a user's emails, bucketed into inbox / approval / done for the UI."""
+    rows = await list_by_user(session, user_id)
+    buckets: dict[str, list[dict]] = {"inbox": [], "approval": [], "done": []}
+    for row in rows:
+        event = _serialize(row)
+        buckets[event["status"]].append(event)
+    return buckets
 
 
 @router.post("/{email_id}/solve")

@@ -1,6 +1,7 @@
 import asyncio
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv("../.env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 from agent_service.notify import notify, NotificationEvent, _credentials_present, _get_agent
 
 async def main():

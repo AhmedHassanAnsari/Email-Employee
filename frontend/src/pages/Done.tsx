@@ -4,17 +4,18 @@ import { useEvent } from "../context/EventContext";
 import EventCard from "../components/EventCard";
 
 const Done: React.FC = () => {
-  const { done } = useEvent();
+  const { done, loading, error } = useEvent();
 
   return (
     <div className="space-y-4">
       <h2 className="text-2xl font-bold mb-4 text-white">Done</h2>
-      {done.length === 0 ? (
+      {error && <p className="text-red-400">{error}</p>}
+      {loading && done.length === 0 ? (
+        <p className="text-gray-400">Loading…</p>
+      ) : done.length === 0 ? (
         <p className="text-gray-400">No completed items.</p>
       ) : (
-        done.map((event) => (
-          <EventCard key={event.id} event={event} />
-        ))
+        done.map((event) => <EventCard key={event.id} event={event} />)
       )}
     </div>
   );
