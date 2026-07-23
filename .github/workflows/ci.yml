@@ -1,0 +1,135 @@
+name: CI - Build & Push Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      agent_service: ${{ steps.filter.outputs.agent_service }}
+      email_monitor: ${{ steps.filter.outputs.email_monitor }}
+      workspace_mcp: ${{ steps.filter.outputs.workspace_mcp }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # agent_service and email_monitor both live in backend/ and share
+          # pyproject.toml + uv.lock, so any backend change rebuilds both.
+          filters: |
+            agent_service:
+              - "backend/**"
+              - ".github/workflows/ci.yml"
+            email_monitor:
+              - "backend/**"
+              - ".github/workflows/ci.yml"
+            workspace_mcp:
+              - "backend/**"
+              - ".github/workflows/ci.yml"
+            frontend:
+              - "frontend/**"
+              - ".github/workflows/ci.yml"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: agent-service
+            enabled: ${{ needs.changes.outputs.agent_service }}
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.agent-service
+            image: email-employee-agent-service
+          - name: email-monitor
+            enabled: ${{ needs.changes.outputs.email_monitor }}
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.email-monitor
+            image: email-employee-email-monitor
+          - name: workspace-mcp
+            enabled: ${{ needs.changes.outputs.workspace_mcp }}
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.workspace-mcp
+            image: email-employee-workspace-mcp
+          - name: frontend
+            enabled: ${{ needs.changes.outputs.frontend }}
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+            image: email-employee-frontend
+    steps:
+      - name: Skip (no changes)
+        if: matrix.enabled != 'true'
+        run: echo "No changes for ${{ matrix.name }} — skipping build."
+
+      - uses: actions/checkout@v4
+        if: matrix.enabled == 'true'
+
+      - name: Set up Docker Buildx
+        if: matrix.enabled == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: matrix.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        if: matrix.enabled == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        if: matrix.enabled == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          # Frontend inlines VITE_API_BASE at build time; empty for non-frontend builds is ignored.
+          build-args: |
+            VITE_API_BASE=${{ vars.VITE_API_BASE }}
+          # Only push on branch pushes, not on PRs from forks.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

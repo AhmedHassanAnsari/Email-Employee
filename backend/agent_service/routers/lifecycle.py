@@ -50,27 +50,27 @@ def _read_json(path) -> dict:
 
 
 def _serialize(email) -> dict:
-    """Shape a DB row (+ its on-disk artefact) into the UI's event model."""
+    """Shape a DB row (+ its on-disk artefact) into the UI's event model.
+
+    ``description``/``snippet`` are always the original email as received —
+    never overwritten by the draft or the sent-summary, so Inbox always shows
+    the real message regardless of what stage the email is at.
+    """
     folder = _FOLDER_FOR_STATUS.get(email.status, "inbox")
-    description = email.snippet or ""
     final_response = None
     summary = None
 
-    if folder == "approval":
-        draft = _read_json(approval_payload_path(email.id))
-        description = draft.get("body") or email.draft_response or description
-    elif folder == "done":
+    if folder == "done":
         done = _read_json(done_summary_path(email.id))
         final_response = done.get("final_response") or email.draft_response
         summary = done.get("summary")
-        description = summary or final_response or description
 
     return {
         "id": str(email.id),
         "status": folder,
         "title": email.subject or "(no subject)",
         "from": email.from_addr,
-        "description": description,
+        "description": email.snippet or "",
         "snippet": email.snippet or "",
         "draft_response": email.draft_response,
         "final_response": final_response,
@@ -104,12 +104,20 @@ async def _load(session, email_id: int):
 
 @router.get("")
 async def list_emails(session: SessionDep, user_id: str) -> dict:
-    """All of a user's emails, bucketed into inbox / approval / done for the UI."""
+    """Inbox is a persistent view — every email the user has ever received
+    stays listed there, with its current status. Approval and Done are
+    filtered views over the same rows, used for the actionable UI (accept/
+    reject) and the sent-mail history respectively.
+    """
     rows = await list_by_user(session, user_id)
     buckets: dict[str, list[dict]] = {"inbox": [], "approval": [], "done": []}
     for row in rows:
         event = _serialize(row)
-        buckets[event["status"]].append(event)
+        buckets["inbox"].append(event)
+        if event["status"] == "approval":
+            buckets["approval"].append(event)
+        elif event["status"] == "done":
+            buckets["done"].append(event)
     return buckets
 
 
