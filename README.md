@@ -48,7 +48,7 @@ The Writer is constructed **per request** bound to the caller's Gmail MCP server
 
 ## Architecture
 
-Three long-running services plus Postgres and an external Gmail MCP server:
+Three long-running app services plus Postgres and a Gmail MCP server (run as the `workspace-mcp` compose service under Docker, or standalone via `uvx` in local dev):
 
 - **`backend` (agent service)** — FastAPI app (`agent_service.main:app`) exposing the email lifecycle (`/solve`, `/approve`, `/reject`), our Google OAuth flow (`/oauth/google/*`), and the `GET /emails` view for the UI. Port `8001`.
 - **`email-monitor`** — standalone poll loop (`email_monitor.py`). For each authorized user it searches Gmail for unread inbox mail, writes an `Inbox/{id}.json` artefact, applies a `Processed` label (restart-safe dedup), upserts an `emails` row, and triggers `/solve`.
@@ -92,11 +92,11 @@ We run Google OAuth ourselves (`access_type=offline`, `prompt=consent`) and stor
 
 ### Prerequisites
 
-- Docker + Docker Compose (easiest path), or Python 3.12 + `uv` and Node 18+ for local dev
+- Docker + Docker Compose (easiest path — pulls prebuilt images from GHCR), plus a GHCR login token (`read:packages`) while the packages are private
 - A Google Cloud OAuth client (Web application) with `http://localhost:8001/oauth/google/callback` as an authorized redirect URI
 - A Gemini API key
 - (Optional) Twilio WhatsApp sandbox credentials for notifications
-- `uvx` available to run the Gmail MCP server (`taylorwilsdon/google_workspace_mcp`)
+- For local dev only (no Docker): Python 3.12 + `uv`, Node 18+, and `uvx` to run the Gmail MCP server (`taylorwilsdon/google_workspace_mcp`)
 
 ### 1. Configure environment
 
@@ -113,30 +113,41 @@ Fill in `.env`:
   uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
   ```
 - `DATABASE_URL` (note the `+asyncpg` scheme)
-- `GMAIL_MCP_URL` (default `http://127.0.0.1:8000/mcp`)
+- `GMAIL_MCP_URL` (default `http://127.0.0.1:8000/mcp` for local dev; under Docker, compose overrides this to `http://workspace-mcp:8000/mcp`)
 - Twilio `account_sid` / `auth_token` / `from` / `to` (optional — notifications no-op if absent)
 
-### 2. Start the Gmail MCP server
+### 2a. Run with Docker Compose (pulls prebuilt images from GHCR)
 
-This runs separately from the compose stack (it needs `uvx`):
+`docker-compose.yml` runs all services — Postgres, the Gmail MCP (`workspace-mcp`), the agent service, the email monitor, and the frontend — from **prebuilt images published to GHCR by CI**. No local build step is needed.
+
+```bash
+# The images are published under a private GHCR namespace, so log in first
+# (personal access token with at least read:packages):
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <your-github-username> --password-stdin
+
+docker compose pull        # fetch the latest images from GHCR
+docker compose up -d       # start the full stack
+```
+
+`docker compose up` also pulls any missing images, so `pull` is optional but makes the fetch explicit. On boot the agent service runs `alembic upgrade head` automatically.
+
+- Frontend: http://localhost:5173
+- Agent API: http://localhost:8001 (`GET /health`)
+
+Images are rebuilt and pushed automatically on every change to `backend/**` or `frontend/**` (see `.github/workflows/ci.yml`). To pin a specific build instead of `latest`, set `IMAGE_TAG` (e.g. `IMAGE_TAG=sha-9d96776 docker compose up -d`).
+
+> **Frontend API URL:** the frontend bakes `VITE_API_BASE` into its static bundle **at image-build time**, not at runtime. The default points at `http://localhost:8001`; to target a different API host, set the `VITE_API_BASE` repository variable in GitHub Actions and let CI rebuild the image.
+
+### 2b. Run locally without Docker
+
+The Gmail MCP server runs separately in this mode (it needs `uvx`):
 
 ```bash
 cd backend
 bash scripts/run_workspace_mcp.sh   # streamable-http on :8000, external-provider mode
 ```
 
-### 3a. Run with Docker Compose
-
-```bash
-docker compose up --build
-```
-
-This starts Postgres, the agent service (runs `alembic upgrade head` on boot), the email monitor, and the frontend.
-
-- Frontend: http://localhost:5173
-- Agent API: http://localhost:8001 (`GET /health`)
-
-### 3b. Run locally without Docker
+Then, in separate shells:
 
 ```bash
 # Backend deps
@@ -156,11 +167,11 @@ npm install
 npm run dev
 ```
 
-### 4. Connect a Gmail account
+### 3. Connect a Gmail account
 
 Open the frontend, sign in, and complete the Google consent flow (the backend redirects through `/oauth/google/start`). Once authorized, the monitor begins polling that inbox.
 
-### 5. Add your own owner profile
+### 4. Add your own owner profile
 
 The agent grounds every reply in an **owner knowledge base** — the `OWNER_PROFILE` string in `backend/agent_service/agent.py`. It ships as an empty placeholder so no personal data is committed to the repo. **You must fill it in with your own details** before the assistant can answer on your behalf.
 

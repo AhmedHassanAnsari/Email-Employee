@@ -15,6 +15,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # Crash recovery after an unclean shutdown can take ~1 min on slow disks
+      # (e.g. WSL2 fsync). Don't count probes as failures until then, or
+      # dependents abort with "dependency failed to start".
+      start_period: 120s
 
   workspace-mcp:
     image: ghcr.io/ahmedhassanansari/email-employee-workspace-mcp:${IMAGE_TAG:-latest}
