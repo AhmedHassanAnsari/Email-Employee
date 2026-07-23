@@ -46,6 +46,46 @@ The Writer is constructed **per request** bound to the caller's Gmail MCP server
 
 ---
 
+## Screenshots
+
+A walkthrough of the full human-in-the-loop lifecycle, in workflow order.
+
+### Sign in
+
+![Sign in](assets/login.png)
+
+### Inbox
+
+Newly fetched incoming emails (`status: pending`).
+
+![Inbox](assets/inbox.png)
+
+### Approval
+
+Drafted replies awaiting human review — approve or reject-with-feedback (`status: drafted`).
+
+![Approval](assets/approval.png)
+
+### WhatsApp notification
+
+The owner is notified on WhatsApp once a drafted reply lands in Approval.
+
+![WhatsApp notification](assets/whatsapp-notification.jpeg)
+
+### Done
+
+Sent replies with their full audit summary (`status: sent`).
+
+![Done](assets/done.png)
+
+### Reply delivered
+
+The approved reply, sent in-thread and shown in the recipient's email client.
+
+![Reply sent in the email UI](assets/reply-sent-email-ui.png)
+
+---
+
 ## Architecture
 
 Three long-running app services plus Postgres and a Gmail MCP server (run as the `workspace-mcp` compose service under Docker, or standalone via `uvx` in local dev):
