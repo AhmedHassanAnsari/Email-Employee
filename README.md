@@ -160,6 +160,14 @@ npm run dev
 
 Open the frontend, sign in, and complete the Google consent flow (the backend redirects through `/oauth/google/start`). Once authorized, the monitor begins polling that inbox.
 
+### 5. Add your own owner profile
+
+The agent grounds every reply in an **owner knowledge base** — the `OWNER_PROFILE` string in `backend/agent_service/agent.py`. It ships as an empty placeholder so no personal data is committed to the repo. **You must fill it in with your own details** before the assistant can answer on your behalf.
+
+Edit `OWNER_PROFILE` in `backend/agent_service/agent.py` and add sections such as: identity/background, current projects, availability and response policy, frequently asked questions, and any email-reply guidelines or agent rules you want enforced. The agent answers senders strictly from this text, so anything you leave out it will not know — and anything you put in **may be quoted to email recipients**, so never include passwords, credentials, or private data you would not send in an email.
+
+> Treat this as configuration, not code. Keep your filled-in profile out of any public fork (e.g. via a local-only edit) if it contains details you would rather not publish.
+
 ---
 
 ## Project layout
@@ -206,3 +214,9 @@ Agent.md                 original design spec
 - **We own auth** — Google refresh tokens are ours, encrypted in Postgres; the Gmail MCP is a stateless resource server.
 - **Restart-safe** — the `Processed` Gmail label and Postgres dedup mean nothing is reprocessed across restarts.
 - **Full auditability** — original email, draft history, feedback, final response, and delivery status are preserved in `Done/` and the database.
+
+---
+
+## Future enhancements
+
+- **Observability through Langfuse** — instrument the multi-agent pipeline with [Langfuse](https://langfuse.com/) for end-to-end tracing, prompt/response logging, latency and token-cost metrics, and evaluation of draft quality across the Writer → Structure → Reviewer → Summarizer chain.
